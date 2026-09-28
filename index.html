@@ -11565,14 +11565,14 @@ const ESCALA_VM = { pistola: 1.0, faca: 1.15 }; // pistola compacta em escala re
 const CORPO_VM = { longa: [0.03, -0.45, -0.2], pistola: [0.03, -0.5, -0.02], faca: [0.03, -0.5, -0.06] };
 var bracosFP = { obj: null, time: null, O: null, mix: null, alvoD: null, alvoE: null };
 // ---- 1ª pessoa com clipes: o mesmo soldado, preso à câmera pelos olhos, tocando a pose de mira; a arma vai no encaixe da mão ----
-// FOV vertical que preserva o campo HORIZONTAL de uma tela 16:9 (os ajustes do viewmodel foram feitos nela). Em telas mais estreitas (celular em pé) o FOV
-// vertical fixo espremia o campo horizontal: as mãos e a pistola enchiam a tela inteira. `sempre` também corrige telas mais largas (celular deitado).
-function fovVertical(fovRef, aspect, sempre, maximo) {
-  const ref = 16 / 9; if (!(aspect > 0) || (!sempre && aspect >= ref)) return fovRef;
-  const v = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(fovRef / 2)) * ref / aspect));
-  return Math.min(maximo || 179, v);
-}
-const VM_CEL = { fov: 60, dy: -0.06 }; // celular: viewmodel um pouco menor (FOV maior) e mais baixo, para as mãos não taparem o jogo na tela pequena
+// Posição do conjunto em 1ª pessoa na tela (por tipo de arma): o rig inteiro (braços + mãos + arma) é girado e deslocado em volta da MÃO
+// do gatilho, então a pegada não muda. [dx, dy, dz, guinada, arfagem, rolagem] no espaço da câmera (m / rad). Guinada + leva o cano para
+// o centro da tela (a arma fica de 3/4, mostrando o lado); pistola no canto inferior direito como nos FPS, em vez de tapar o centro.
+let DEDOS_PIST = [-1.0, -0.75, 0.55]; // 1ª pessoa/pistola: fechamento (rad por falange) de médio/anelar/mínimo, do indicador (gatilho) e do polegar
+let UMA_MAO_FP = { pistola: true }; // pistola em 1ª pessoa com a mão direita só: as duas luvas juntas no cabo viravam um bolo
+let PLANO_FP = { pistola: 0.05, faca: 0.05 };
+const AJUSTE_FP = { faca: [0, -0.02, 0, 0, 0, 0] }; // 1ª pessoa: faca apontando para a frente na mão fechada (o giro de 50° dos bots deixava a lâmina atravessada na tela) // plano de corte do tronco (m à frente dos olhos): com a pistola no canto os ombros ficam bem abaixo, 15 cm cortava os antebraços
+let VM_OFF = { pistola: [0.14, -0.06, -0.06, 0.12, 0.02, 0.0], faca: [0.14, -0.06, -0.06, 0.12, 0.02, 0.0] };
 const MAO_FP = { pistol: [0.07, -0.10, -0.34], rifle: [0.07, -0.11, -0.28], smg: [0.07, -0.09, -0.28], mg: [0.12, -0.13, -0.30] }; // mg: minigun na cintura, deslocada para a direita e para baixo (vista de trás ela ficava só um punho no centro) // posição do punho direito em relação à câmera (x direita, y cima, z frente negativa) por família: define o enquadramento da arma
 const OMBROS_FP = { pistol: [0, -0.38, 0.0], rifle: [0, -0.20, 0.06] }; // pistola: ombros bem abaixo (cotovelos para baixo, antebraços sobem até as mãos — como no vídeo de referência); fuzil: ao ombro // ponto médio dos ombros em relação à câmera (olhos ~20 cm acima da linha dos ombros)
 const MIRA_FP = { pistol: 1, rifle: 1 }; // 1 = clipe de mira (arma ao ombro), 0 = clipe parado (guarda baixa) como pose base em 1ª pessoa
@@ -11639,26 +11639,26 @@ function atualizarFPAnimado(dt) {
       if (dir.lengthSq() > 1e-8) { dir.normalize(); FPA.obj.quaternion.setFromUnitVectors(dir, new THREE.Vector3(0, 0, -1)); if (fam === 'pistol' && DEDOS_FP.roll) FPA.obj.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), DEDOS_FP.roll)); FPA.obj.updateMatrixWorld(true); }
     }
     const OM = OMBROS_FP[fam]; const omb = pl(O.LeftArm.getWorldPosition(new THREE.Vector3())).lerp(pl(O.RightArm.getWorldPosition(new THREE.Vector3())), 0.5);
-    FPA.obj.position.add(new THREE.Vector3(OM[0], (OM[1] + (MOBILE ? VM_CEL.dy : 0)), OM[2]).sub(omb)); FPA.obj.updateMatrixWorld(true);
+    FPA.obj.position.add(new THREE.Vector3(OM[0], OM[1], OM[2]).sub(omb)); FPA.obj.updateMatrixWorld(true);
     const hl = pl(O.RightHand.getWorldPosition(new THREE.Vector3())), le = pl(O.LeftHand.getWorldPosition(new THREE.Vector3()));
     if (pura || !FPA.maoPura || FPA.famPura !== chave) { FPA.maoPura = hl.clone(); FPA.maoEPura = le.clone(); FPA.famPura = chave; }
     const MF = MAO_FP[a.tipo] || MAO_FP[fam], kRel = 1 - 0.5 * wRel; // na recarga o movimento do clipe é reduzido pela metade para a arma não sair pela borda de cima
     const deslD = hl.clone().sub(FPA.maoPura).multiplyScalar(kRel); if (wFire > 0) deslD.clampLength(0, 0.05); // o clipe de tiro joga a arma para fora do quadro: coice limitado a 5 cm (o pivô já dá o recuo)
     const kS = 1 - Math.exp(-dt * 18); if (!FPA.deslSuave || FPA.famSuave !== chave) { FPA.deslSuave = deslD.clone(); FPA.famSuave = chave; } else FPA.deslSuave.lerp(deslD, kS); deslD.copy(FPA.deslSuave); // filtro ~55 ms: tira a vibração do clipe de andar sem atrasar o giro da câmera (tudo no espaço do pivô)
     const qp = FPA.pivo.getWorldQuaternion(new THREE.Quaternion()), polo = O.RightArm.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0.6, -1, 0.2).applyQuaternion(qp));
-    const alvo = FPA.pivo.localToWorld(new THREE.Vector3(MF[0], (MF[1] + (MOBILE ? VM_CEL.dy : 0)), MF[2]).add(deslD));
+    const alvo = FPA.pivo.localToWorld(new THREE.Vector3(MF[0], MF[1], MF[2]).add(deslD));
     const qAntes = qp.clone().invert().multiply(O.RightHand.getWorldQuaternion(new THREE.Quaternion())); // orientação do punho no espaço do pivô, suavizada como o deslocamento
     if (!FPA.qMaoSuave || FPA.famSuave2 !== chave) { FPA.qMaoSuave = qAntes.clone(); FPA.famSuave2 = chave; } else FPA.qMaoSuave.slerp(qAntes, kS);
-    if (fam === 'pistol' && !MODO_PISTOLA_IK) { FPA.obj.position.add(new THREE.Vector3(MF[0], (MF[1] + (MOBILE ? VM_CEL.dy : 0)), MF[2]).add(deslD).sub(hl)); FPA.obj.updateMatrixWorld(true); } // pistola: o corpo inteiro desliza até a mão ficar em MAO_FP — braço e punho ficam exatamente como no clipe (o IK torcia o punho e a malha da luva amassava)
+    if (fam === 'pistol' && !MODO_PISTOLA_IK) { FPA.obj.position.add(new THREE.Vector3(MF[0], MF[1], MF[2]).add(deslD).sub(hl)); FPA.obj.updateMatrixWorld(true); } // pistola: o corpo inteiro desliza até a mão ficar em MAO_FP — braço e punho ficam exatamente como no clipe (o IK torcia o punho e a malha da luva amassava)
     else { ikDoisOssos(O.RightArm, O.RightForeArm, O.RightHand, alvo, polo); if (fam !== 'pistol' || MODO_PUNHO_D) acomodarPunho(O, 'Right', qp.clone().multiply(FPA.qMaoSuave)); } // pistola: punho segue o antebraço (FK) — forçar a orientação do clipe torcia o punho
     // mão esquerda na recarga = relação do clipe com a mão direita; fora dela vai para a arma (cabo da pistola / guarda-mão) em apoiarMaoEsquerda
-    FPA.alvoE = FPA.pivo.localToWorld(new THREE.Vector3(MF[0], (MF[1] + (MOBILE ? VM_CEL.dy : 0)), MF[2]).sub(FPA.maoPura).add(FPA.maoEPura).add(le.clone().sub(FPA.maoEPura).multiplyScalar(kRel)));
+    FPA.alvoE = FPA.pivo.localToWorld(new THREE.Vector3(MF[0], MF[1], MF[2]).sub(FPA.maoPura).add(FPA.maoEPura).add(le.clone().sub(FPA.maoEPura).multiplyScalar(kRel)));
     FPA.poloE = O.LeftArm.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(-0.6, -1, 0.2).applyQuaternion(qp));
   }
   if (a.tipo === 'pistola' && O.RightHandIndex1 && O.RightHandPinky1 && FLEX_PUNHO_FP) { const ek = O.RightHandPinky1.getWorldPosition(new THREE.Vector3()).sub(O.RightHandIndex1.getWorldPosition(new THREE.Vector3())).normalize(); girarOssoEixo(O.RightHand, ek, FLEX_PUNHO_FP); } // flexão extra do punho direito (calibrada: nivela o cano com a mira nesta configuração de ombros/mão)
   { // encaixe da arma na mão (todo quadro: o eixo vem da pose)
     FPA.obj.updateMatrixWorld(true); const kE = ESCALA_FP[a.tipo] || 1; const e = encaixeArma(O, (PEGA_ARMA[a.tipo] || PEGA_ARMA.padrao).clone().multiplyScalar(kE), fam, new THREE.Vector3(0, 0, -1).applyQuaternion(FPA.pivo.getWorldQuaternion(new THREE.Quaternion())), 1, RAKE_FP[a.tipo] !== undefined ? RAKE_FP[a.tipo] : RAKE_ARMA[fam]);
-    if (e) { const aj = AJUSTE_ENCAIXE[a.tipo] || AJUSTE_ENCAIXE.padrao; FPA.arma.position.copy(e.pos).add(new THREE.Vector3(aj[0], aj[1], aj[2]).applyQuaternion(e.quat).multiplyScalar(e.esc)); FPA.arma.quaternion.copy(e.quat).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(aj[3], aj[4], aj[5]))); FPA.arma.scale.setScalar(e.esc * kE); FPA.fam = fam; FPA.arma.updateMatrixWorld(true); if (a.tipo !== 'faca' && a.tipo !== 'lancador') { if (wRel && FPA.alvoE && O.LeftArm && O.LeftForeArm) { const qA = O.LeftHand.getWorldQuaternion(new THREE.Quaternion()); ikDoisOssos(O.LeftArm, O.LeftForeArm, O.LeftHand, FPA.alvoE, FPA.poloE); girarOssoMundo(O.LeftHand, qA.multiply(O.LeftHand.getWorldQuaternion(new THREE.Quaternion()).invert())); } else apoiarMaoEsquerda(O, FPA.arma, fam, FPA.info, 1, FPA.poloE); }
+    if (e) { const aj = AJUSTE_FP[a.tipo] || AJUSTE_ENCAIXE[a.tipo] || AJUSTE_ENCAIXE.padrao; FPA.arma.position.copy(e.pos).add(new THREE.Vector3(aj[0], aj[1], aj[2]).applyQuaternion(e.quat).multiplyScalar(e.esc)); FPA.arma.quaternion.copy(e.quat).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(aj[3], aj[4], aj[5]))); FPA.arma.scale.setScalar(e.esc * kE); FPA.fam = fam; FPA.arma.updateMatrixWorld(true); if (a.tipo !== 'faca' && a.tipo !== 'lancador' && !UMA_MAO_FP[a.tipo]) { if (wRel && FPA.alvoE && O.LeftArm && O.LeftForeArm) { const qA = O.LeftHand.getWorldQuaternion(new THREE.Quaternion()); ikDoisOssos(O.LeftArm, O.LeftForeArm, O.LeftHand, FPA.alvoE, FPA.poloE); girarOssoMundo(O.LeftHand, qA.multiply(O.LeftHand.getWorldQuaternion(new THREE.Quaternion()).invert())); } else apoiarMaoEsquerda(O, FPA.arma, fam, FPA.info, 1, FPA.poloE); }
       if (fam === 'pistol' && O.RightHandIndex1 && O.RightHandPinky1) { // dedos: indicador direito esticado (gatilho) e polegares girados
         const eD = O.RightHandPinky1.getWorldPosition(new THREE.Vector3()).sub(O.RightHandIndex1.getWorldPosition(new THREE.Vector3())).normalize();
         for (let k = 1; k <= 3; k++) if (O['RightHandIndex' + k]) girarOssoEixo(O['RightHandIndex' + k], eD, DEDOS_FP.indD);
@@ -11666,16 +11666,24 @@ function atualizarFPAnimado(dt) {
         if (O.LeftHandIndex1 && O.LeftHandPinky1) { const eE = O.LeftHandIndex1.getWorldPosition(new THREE.Vector3()).sub(O.LeftHandPinky1.getWorldPosition(new THREE.Vector3())).normalize(); for (let k = 1; k <= 2; k++) if (O['LeftHandThumb' + k]) girarOssoEixo(O['LeftHandThumb' + k], eE, DEDOS_FP.polE); }
       } }
   }
+  if ((a.tipo === 'pistola' || a.tipo === 'faca') && O.RightHandIndex1 && O.RightHandPinky1) { // mão do gatilho fechada no cabo: médio/anelar/mínimo envolvem, indicador no gatilho (o clipe deixava os dedos esticados sob a arma)
+    const eD = O.RightHandPinky1.getWorldPosition(new THREE.Vector3()).sub(O.RightHandIndex1.getWorldPosition(new THREE.Vector3())).normalize();
+    for (const [d, ang] of [['Middle', DEDOS_PIST[0]], ['Ring', DEDOS_PIST[0]], ['Pinky', DEDOS_PIST[0]], ['Index', DEDOS_PIST[1]]]) for (let k = 1; k <= 3; k++) if (O['RightHand' + d + k]) girarOssoEixo(O['RightHand' + d + k], eD, ang * (k === 1 ? 1 : 0.85));
+    for (let k = 1; k <= 2; k++) if (O['RightHandThumb' + k]) girarOssoEixo(O['RightHandThumb' + k], eD, DEDOS_PIST[2]); }
+  if (UMA_MAO_FP[a.tipo] && O.LeftArm) O.LeftArm.scale.setScalar(0.001); // pistola com uma mão (como CS/GTA): o braço esquerdo some (na recarga ele aparecia como uma mão solta no meio da tela)
   // plano de corte: 15 cm à frente da câmera, no espaço do mundo
   { // planos de corte: 1) 15 cm à frente da câmera (tira tronco/cabeça); 2) diagonal, tira o ombro esquerdo colado à câmera e mantém o antebraço
     const qc = camera.getWorldQuaternion(new THREE.Quaternion()), cp = camera.getWorldPosition(new THREE.Vector3()); const f = new THREE.Vector3(0, 0, -1).applyQuaternion(qc);
-    FPA.plano.setFromNormalAndCoplanarPoint(f, cp.clone().addScaledVector(f, 0.15));
+    FPA.plano.setFromNormalAndCoplanarPoint(f, cp.clone().addScaledVector(f, PLANO_FP[a.tipo] !== undefined ? PLANO_FP[a.tipo] : 0.15));
     const C2 = [1, 0, 1, -0.10]; const n2 = new THREE.Vector3(C2[0], C2[1], -C2[2]).normalize().applyQuaternion(qc); FPA.plano2.setFromNormalAndCoplanarPoint(n2, cp.clone().addScaledVector(n2, C2[3])); }
   // balanço, recuo e troca de arma no pivô (gira em volta dos olhos)
   const bob = Math.sin(balancoFP) * 0.012 * Math.min(1, velH / 3), troca = j.trocando > 0 ? Math.min(1, j.trocando / 0.45) : 0;
   FPA.pivo.position.set(Math.sin(balancoFP * 0.5) * 0.006 * Math.min(1, velH / 3), Math.abs(bob) * 0.6 - troca * 0.35, recuoV * 0.15);
   const INC = 0;
   FPA.pivo.rotation.set(INC - recuoV * 0.9 + troca * 0.6, recuoV * 0.15, 0);
+  const VO = VM_OFF[a.tipo];
+  if (VO) { const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(VO[4], VO[3], VO[5], 'YXZ')), MF = MAO_FP[a.tipo] || MAO_FP[fam], m = new THREE.Vector3(MF[0], MF[1], MF[2]);
+    FPA.pivo.quaternion.multiply(q); FPA.pivo.position.add(m.clone().add(new THREE.Vector3(VO[0], VO[1], VO[2])).sub(m.applyQuaternion(q))); }
   if (FPA.info) { const inf = FPA.info; if (inf.canos) inf.canos.rotation.z += (j.giroMg || 0) / (j.arma.giro || 1) * 45 * dt; if (inf.foguete) inf.foguete.visible = partesArma.mun && partesArma.mun.pente > 0; }
 }
 let balancoFP = 0;
@@ -11764,7 +11772,7 @@ function atualizarCamera(dt) {
   tremor = Math.max(0, tremor - dt * 2);
   const swayZoom = j.zoom ? (j.agachado ? 0.0012 : 0.004) * (1 + velH * 0.6) : 0;
   camera.rotation.set(j.pitch + (Math.random() - 0.5) * tremor * 0.05 + Math.sin(tempo * 1.7) * swayZoom, j.yaw + (Math.random() - 0.5) * tremor * 0.05 + Math.cos(tempo * 1.1) * swayZoom, 0);
-  const fovAlvo = fovVertical(j.zoom && j.arma.zoom ? j.arma.zoom : fovBase, camera.aspect, false, 110); // celular em pé: mantém o campo horizontal (senão a tela vira uma fresta)
+  const fovAlvo = j.zoom && j.arma.zoom ? j.arma.zoom : fovBase;
   camera.fov += (fovAlvo - camera.fov) * Math.min(1, dt * 12); camera.updateProjectionMatrix();
   // modelo da arma
   if (CLIPES.montado && prepararFPAnimado()) {
@@ -12272,7 +12280,7 @@ function prepararSAO() { // câmera da oclusão copia a principal; objetos opaco
 function desenhar() {
   if (POS.composer) { if (POS.camSAO) prepararSAO(); POS.composer.render(); } else renderer.render(scene, camera);
   if (FPA.cam && FPA.pivo && FPA.pivo.visible && jogador) { // corpo em 1ª pessoa: passo próprio, FOV 52°, por cima de tudo
-    const fov = fovVertical(MOBILE ? VM_CEL.fov : 52, camera.aspect, true, 150); if (FPA.cam.fov !== fov || FPA.cam.aspect !== camera.aspect) { FPA.cam.fov = fov; FPA.cam.aspect = camera.aspect; FPA.cam.updateProjectionMatrix(); }
+    const fov = 52; if (FPA.cam.fov !== fov || FPA.cam.aspect !== camera.aspect) { FPA.cam.fov = fov; FPA.cam.aspect = camera.aspect; FPA.cam.updateProjectionMatrix(); }
     const fundo = scene.background, auto = renderer.autoClear; scene.background = null; renderer.autoClear = false; renderer.clearDepth();
     const sombra = renderer.shadowMap.autoUpdate; renderer.shadowMap.autoUpdate = false; renderer.render(scene, FPA.cam); renderer.shadowMap.autoUpdate = sombra; scene.background = fundo; renderer.autoClear = auto;
   }
