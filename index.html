@@ -9931,7 +9931,7 @@ function montarClipes() {
       else { const v = tr.v.map(x => x * esc); for (let i = 3; i < v.length; i += 3) for (let k = 0; k < 3; k++) if (k !== cima) v[i + k] = v[k]; tracks.push(new THREE.VectorKeyframeTrack(nome, tr.t, v)); } // sem deslocamento de raiz (fica no lugar); só o eixo vertical anima
     }
     let clip = new THREE.AnimationClip(k, c.d, tracks);
-    if (k === 'pistolAim') clip = THREE.AnimationUtils.subclip(clip, k, 0, 18, 15); // o clipe mira 1,2 s e depois abaixa a arma: só a parte de mira, em laço
+    if (k === 'pistolAim') clip = THREE.AnimationUtils.subclip(clip, k, 0, 15, 15); // 'Pistol Aim' não é laço (mira 1 s parado, mexe o braço e depois abaixa): só o trecho parado, tocado em vai-e-vem
     CLIPES.clips[k] = clip;
   }
   CLIPES.montado = true;
@@ -9989,7 +9989,8 @@ function apoiarMaoEsquerda(O, grupoArma, fam, info, k, poloOpc) {
 }
 const PEGA_ARMA = { pistola: new THREE.Vector3(0, -0.085, 0.015), faca: new THREE.Vector3(0, -0.05, 0.05), mg: new THREE.Vector3(0.05, -0.06, 0.16), lancador: new THREE.Vector3(0, -0.06, 0.02), padrao: new THREE.Vector3(0, -0.06, 0.02) }; // centro do cabo no espaço de cada modelo de arma
 const DESLOC_ARMA = { pistol: [0, 0, 0], rifle: [0, -0.05, 0.03] }; // deslocamento fino nos eixos da arma (m), calibrado nas capturas
-const APOIO_PIST = [-0.07, -0.06, 0.06, 0, -0.35]; // pistola: punho esquerdo no espaço da arma (x, y, z), rolagem em volta do cano (rad) e fechamento dos dedos (rad/falange) // pistola: punho esquerdo no espaço da arma e fechamento dos dedos de apoio
+const APOIO_PIST = [-0.07, -0.06, 0.06, 0, -0.35];
+const DEDOS_FP = { indD: 0, polD: 0, polE: 0, roll: 0 }; // 1ª pessoa/pistola: abre o indicador direito (gatilho), gira os polegares e rola o viewmodel (rad) // pistola: punho esquerdo no espaço da arma (x, y, z), rolagem em volta do cano (rad) e fechamento dos dedos (rad/falange) // pistola: punho esquerdo no espaço da arma e fechamento dos dedos de apoio
 const RAKE_ARMA = { pistol: 0.50, rifle: 0.26 }; // inclinação do cabo em relação ao eixo dos nós dos dedos (rad), calibrada medindo o eixo do cano contra a mira em 1ª pessoa (pistola 0,50 → 0°, fuzil 0,26 → 0°) // inclinação do cabo (rad), calibrada: cano paralelo à mira na pose de mira (medido em 1ª pessoa e nos bots)
 const AJUSTE_ENCAIXE = { pistola: [0, -0.02, 0, 0, 0, 0], faca: [0, -0.02, 0, -0.25, 0.9, 0], padrao: [0, 0, 0, 0, 0, 0] }; // faca: lâmina girada ~50° para a esquerda e um pouco para cima (de ponta para a mira só aparecia a ponta) // pistola: punho 2 cm mais alto no cabo (validado em recorte: -0.05 afundava a arma no punho, 0 deixava cabo sobrando) // (o encaixe pelo punho já põe o cabo dentro da mão; −5 cm afundava a pistola no punho) // afinação fina por tipo (m, m, m, rad, rad, rad) nos eixos da arma // afinação fina (m, m, m, rad, rad, rad) por tipo
 function esvaziarArma(g, manter) { for (let i = g.children.length - 1; i >= 0; i--) { const o = g.children[i]; if (o === manter) continue; o.traverse(m => { if (m.geometry && !m.geometry.userData.cache) m.geometry.dispose(); if (m.material && m.material.userData.descartavel) m.material.dispose(); }); g.remove(o); } }
@@ -10161,6 +10162,7 @@ class Soldado {
     modelo.traverse(o => { if (o.isBone) ossos[o.name.replace(/^mixamorig:?/, '')] = o; if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; if (mats[o.material.name]) o.material = mats[o.material.name]; } });
     const mixer = new THREE.AnimationMixer(modelo), acts = {};
     for (const [k, clip] of Object.entries(CLIPES.clips)) { const a = mixer.clipAction(clip); a.play(); a.setEffectiveWeight(0); a.time = Math.random() * clip.duration; acts[k] = a; }
+    if (acts.pistolAim) acts.pistolAim.setLoop(THREE.LoopPingPong, Infinity); // trecho parado em vai-e-vem (sem salto)
     for (const k of ['pistolFire', 'rifleFire', 'pistolReload', 'rifleReload']) if (acts[k]) { acts[k].setLoop(THREE.LoopOnce); acts[k].clampWhenFinished = true; acts[k].time = 0; acts[k].stop(); }
     const arma = new THREE.Group(); (ossos.RightHand || modelo).add(arma);
     if (!texFlash) texFlash = spriteSuave('rgba(255,225,150,A)', 1);
@@ -11562,8 +11564,10 @@ function prepararFPAnimado() {
   const mix = new THREE.AnimationMixer(m), acts = {};
   for (const [k, clip] of Object.entries(CLIPES.clips)) { const a = mix.clipAction(clip); a.play(); a.setEffectiveWeight(0); acts[k] = a; }
   for (const k of ['pistolFire', 'rifleFire', 'pistolReload', 'rifleReload']) if (acts[k]) { acts[k].setLoop(THREE.LoopOnce); acts[k].clampWhenFinished = true; acts[k].stop(); }
+  if (acts.pistolAim) { acts.pistolAim.paused = true; acts.pistolAim.time = 0.5; } // 1ª pessoa: pose de mira da pistola congelada (o clipe 'Pistol Aim' não é laço; o balanço vem do pivô/andar)
   const pivo = new THREE.Group(); pivo.add(m); camera.add(pivo); // o glb já olha para -Z, o mesmo eixo para onde a câmera olha
-  if (!FPA.cam) { FPA.cam = new THREE.PerspectiveCamera(52, camera.aspect, 0.03, 20); FPA.cam.layers.set(3); camera.add(FPA.cam); sol.layers.enable(3); hemi.layers.enable(3); }
+  if (!FPA.cam) { FPA.cam = new THREE.PerspectiveCamera(52, camera.aspect, 0.03, 20); FPA.cam.layers.set(3); camera.add(FPA.cam); sol.layers.enable(3); hemi.layers.enable(3);
+    const luz = new THREE.DirectionalLight(0xfff1dc, 0.35); luz.position.set(-1.2, 0.6, 0.3); luz.target.position.set(0, -0.3, -1); luz.layers.set(3); camera.add(luz); camera.add(luz.target); FPA.luz = luz; } // luz-chave do viewmodel: vem de cima/esquerda da câmera, só na camada 3 (não ilumina o mundo)
   const arma = new THREE.Group(); (O.RightHand || m).add(arma);
   // tronco some: o peito (Spine2) colapsa num ponto e os ombros compensam (posição e escala ×1000) para os braços ficarem no lugar; só braços e mãos aparecem, como num viewmodel
   if (O.Spine2 && O.LeftShoulder && O.RightShoulder) { O.Spine2.scale.setScalar(0.001); for (const s of [O.LeftShoulder, O.RightShoulder]) { s.position.multiplyScalar(1000); s.scale.multiplyScalar(1000); } }
@@ -11593,7 +11597,7 @@ function atualizarFPAnimado(dt) {
   const wRel = FPA.recarregando && reload ? 1 : 0, wFire = !wRel && fire && fire.isRunning() && fire.time < 0.45 ? Math.max(0, 1 - fire.time / 0.45) * (fam === 'pistol' ? 0.5 : 1) : 0, base = 1 - Math.max(wRel, wFire); // pistola: o clipe 'Shooting Pistol' levanta demais a arma, metade do peso basta (o pivô dá o resto do coice)
   const velH = Math.hypot(j.vel.x, j.vel.z), mov = Math.min(1, velH / 1.5) * 0.2; // ao andar mistura um pouco do clipe de andar (balanço dos braços; mais que isso o fuzil desce para fora do quadro)
   if (reload) reload.setEffectiveWeight(wRel); if (fire) fire.setEffectiveWeight(wFire);
-  const kM = MIRA_FP[fam]; if (aim) aim.setEffectiveWeight(base * (1 - mov) * kM); if (walk) { walk.setEffectiveWeight(base * mov); walk.timeScale = Math.max(0.8, velH / 1.5); } if (idle) idle.setEffectiveWeight(base * (1 - mov) * (1 - kM));
+  const kM = MIRA_FP[fam]; if (aim) aim.setEffectiveWeight(base * (1 - mov) * kM); if (walk) { walk.setEffectiveWeight(base * mov); walk.timeScale = Math.min(1.5, Math.max(0.8, velH / 2.5)); } if (idle) idle.setEffectiveWeight(base * (1 - mov) * (1 - kM));
   restaurarPose(FPA.limpo); FPA.mix.update(dt); FPA.limpo = salvarPose(O, FPA.limpo); /* o mixer só reescreve o osso quando o valor do clipe muda: sem restaurar a pose limpa, o IK de cada quadro se acumulava (a mão pulava entre duas posições) */
   if (O.Neck) O.Neck.scale.setScalar(0.001);
   // viewmodel: 1) a linha natural da arma no clipe (mão D→mão E no fuzil, antebraço na pistola) gira o corpo até coincidir com a frente da mira;
@@ -11606,7 +11610,7 @@ function atualizarFPAnimado(dt) {
       const ml = v => FPA.obj.worldToLocal(v);
       const h = ml(O.RightHand.getWorldPosition(new THREE.Vector3())), o2 = ml(fam === 'rifle' ? O.LeftHand.getWorldPosition(new THREE.Vector3()) : O.RightForeArm.getWorldPosition(new THREE.Vector3()));
       const dir = fam === 'rifle' ? o2.sub(h) : h.clone().sub(o2);
-      if (dir.lengthSq() > 1e-8) { dir.normalize(); FPA.obj.quaternion.setFromUnitVectors(dir, new THREE.Vector3(0, 0, -1)); FPA.obj.updateMatrixWorld(true); }
+      if (dir.lengthSq() > 1e-8) { dir.normalize(); FPA.obj.quaternion.setFromUnitVectors(dir, new THREE.Vector3(0, 0, -1)); if (fam === 'pistol' && DEDOS_FP.roll) FPA.obj.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), DEDOS_FP.roll)); FPA.obj.updateMatrixWorld(true); }
     }
     const OM = OMBROS_FP[fam]; const omb = pl(O.LeftArm.getWorldPosition(new THREE.Vector3())).lerp(pl(O.RightArm.getWorldPosition(new THREE.Vector3())), 0.5);
     FPA.obj.position.add(new THREE.Vector3(OM[0], OM[1], OM[2]).sub(omb)); FPA.obj.updateMatrixWorld(true);
@@ -11614,18 +11618,26 @@ function atualizarFPAnimado(dt) {
     if (pura || !FPA.maoPura || FPA.famPura !== chave) { FPA.maoPura = hl.clone(); FPA.maoEPura = le.clone(); FPA.famPura = chave; }
     const MF = MAO_FP[a.tipo] || MAO_FP[fam], kRel = 1 - 0.5 * wRel; // na recarga o movimento do clipe é reduzido pela metade para a arma não sair pela borda de cima
     const deslD = hl.clone().sub(FPA.maoPura).multiplyScalar(kRel); if (wFire > 0) deslD.clampLength(0, 0.05); // o clipe de tiro joga a arma para fora do quadro: coice limitado a 5 cm (o pivô já dá o recuo)
+    const kS = 1 - Math.exp(-dt * 18); if (!FPA.deslSuave || FPA.famSuave !== chave) { FPA.deslSuave = deslD.clone(); FPA.famSuave = chave; } else FPA.deslSuave.lerp(deslD, kS); deslD.copy(FPA.deslSuave); // filtro ~55 ms: tira a vibração do clipe de andar sem atrasar o giro da câmera (tudo no espaço do pivô)
     const qp = FPA.pivo.getWorldQuaternion(new THREE.Quaternion()), polo = O.RightArm.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0.6, -1, 0.2).applyQuaternion(qp));
     const alvo = FPA.pivo.localToWorld(new THREE.Vector3(MF[0], MF[1], MF[2]).add(deslD));
-    const qAntes = O.RightHand.getWorldQuaternion(new THREE.Quaternion());
+    const qAntes = qp.clone().invert().multiply(O.RightHand.getWorldQuaternion(new THREE.Quaternion())); // orientação do punho no espaço do pivô, suavizada como o deslocamento
+    if (!FPA.qMaoSuave || FPA.famSuave2 !== chave) { FPA.qMaoSuave = qAntes.clone(); FPA.famSuave2 = chave; } else FPA.qMaoSuave.slerp(qAntes, kS);
     ikDoisOssos(O.RightArm, O.RightForeArm, O.RightHand, alvo, polo);
-    girarOssoMundo(O.RightHand, qAntes.multiply(O.RightHand.getWorldQuaternion(new THREE.Quaternion()).invert()));
+    girarOssoMundo(O.RightHand, qp.clone().multiply(FPA.qMaoSuave).multiply(O.RightHand.getWorldQuaternion(new THREE.Quaternion()).invert()));
     // mão esquerda na recarga = relação do clipe com a mão direita; fora dela vai para a arma (cabo da pistola / guarda-mão) em apoiarMaoEsquerda
     FPA.alvoE = FPA.pivo.localToWorld(new THREE.Vector3(MF[0], MF[1], MF[2]).sub(FPA.maoPura).add(FPA.maoEPura).add(le.clone().sub(FPA.maoEPura).multiplyScalar(kRel)));
     FPA.poloE = O.LeftArm.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(-0.6, -1, 0.2).applyQuaternion(qp));
   }
   { // encaixe da arma na mão (todo quadro: o eixo vem da pose)
     FPA.obj.updateMatrixWorld(true); const e = encaixeArma(O, PEGA_ARMA[a.tipo] || PEGA_ARMA.padrao, fam, new THREE.Vector3(0, 0, -1).applyQuaternion(FPA.pivo.getWorldQuaternion(new THREE.Quaternion())), 1, RAKE_ARMA[fam]);
-    if (e) { const aj = AJUSTE_ENCAIXE[a.tipo] || AJUSTE_ENCAIXE.padrao; FPA.arma.position.copy(e.pos).add(new THREE.Vector3(aj[0], aj[1], aj[2]).applyQuaternion(e.quat).multiplyScalar(e.esc)); FPA.arma.quaternion.copy(e.quat).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(aj[3], aj[4], aj[5]))); FPA.arma.scale.setScalar(e.esc); FPA.fam = fam; FPA.arma.updateMatrixWorld(true); if (a.tipo !== 'faca' && a.tipo !== 'lancador') { if (wRel && FPA.alvoE && O.LeftArm && O.LeftForeArm) { const qA = O.LeftHand.getWorldQuaternion(new THREE.Quaternion()); ikDoisOssos(O.LeftArm, O.LeftForeArm, O.LeftHand, FPA.alvoE, FPA.poloE); girarOssoMundo(O.LeftHand, qA.multiply(O.LeftHand.getWorldQuaternion(new THREE.Quaternion()).invert())); } else apoiarMaoEsquerda(O, FPA.arma, fam, FPA.info, 1, FPA.poloE); } }
+    if (e) { const aj = AJUSTE_ENCAIXE[a.tipo] || AJUSTE_ENCAIXE.padrao; FPA.arma.position.copy(e.pos).add(new THREE.Vector3(aj[0], aj[1], aj[2]).applyQuaternion(e.quat).multiplyScalar(e.esc)); FPA.arma.quaternion.copy(e.quat).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(aj[3], aj[4], aj[5]))); FPA.arma.scale.setScalar(e.esc); FPA.fam = fam; FPA.arma.updateMatrixWorld(true); if (a.tipo !== 'faca' && a.tipo !== 'lancador') { if (wRel && FPA.alvoE && O.LeftArm && O.LeftForeArm) { const qA = O.LeftHand.getWorldQuaternion(new THREE.Quaternion()); ikDoisOssos(O.LeftArm, O.LeftForeArm, O.LeftHand, FPA.alvoE, FPA.poloE); girarOssoMundo(O.LeftHand, qA.multiply(O.LeftHand.getWorldQuaternion(new THREE.Quaternion()).invert())); } else apoiarMaoEsquerda(O, FPA.arma, fam, FPA.info, 1, FPA.poloE); }
+      if (fam === 'pistol' && O.RightHandIndex1 && O.RightHandPinky1) { // dedos: indicador direito esticado (gatilho) e polegares girados
+        const eD = O.RightHandPinky1.getWorldPosition(new THREE.Vector3()).sub(O.RightHandIndex1.getWorldPosition(new THREE.Vector3())).normalize();
+        for (let k = 1; k <= 3; k++) if (O['RightHandIndex' + k]) girarOssoEixo(O['RightHandIndex' + k], eD, DEDOS_FP.indD);
+        for (let k = 1; k <= 2; k++) if (O['RightHandThumb' + k]) girarOssoEixo(O['RightHandThumb' + k], eD, DEDOS_FP.polD);
+        if (O.LeftHandIndex1 && O.LeftHandPinky1) { const eE = O.LeftHandIndex1.getWorldPosition(new THREE.Vector3()).sub(O.LeftHandPinky1.getWorldPosition(new THREE.Vector3())).normalize(); for (let k = 1; k <= 2; k++) if (O['LeftHandThumb' + k]) girarOssoEixo(O['LeftHandThumb' + k], eE, DEDOS_FP.polE); }
+      } }
   }
   // plano de corte: 15 cm à frente da câmera, no espaço do mundo
   { // planos de corte: 1) 15 cm à frente da câmera (tira tronco/cabeça); 2) diagonal, tira o ombro esquerdo colado à câmera e mantém o antebraço
