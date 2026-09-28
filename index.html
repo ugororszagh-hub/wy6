@@ -9964,6 +9964,19 @@ function encaixeArma(O, pega, fam, dirMira, kMira, rake) {
   return { pos: H.worldToLocal(posMundo.clone()), quat: qH.invert().multiply(qMundo), esc: 1 / sH, centro, qMundo };
 }
 // mão de apoio (esquerda) vai até um ponto da arma: pistola = envolve a mão direita; fuzil = guarda-mão (res.maoE do modelo)
+function restoOssos() { if (!MODELO.resto) { MODELO.resto = {}; MODELO.gltf.scene.traverse(o => { if (o.isBone) MODELO.resto[o.name.replace(/^mixamorig:?/, '')] = o.quaternion.clone(); }); } return MODELO.resto; }
+// põe a mão na orientação de mundo qAlvo e passa a TORÇÃO do punho para o antebraço (pronação/supinação): com o punho torcido além
+// do natural a malha da luva amassava ("tecido enrugado"); a flexão (swing) fica no punho
+function acomodarPunho(O, lado, qAlvo) {
+  const F = O[lado + 'ForeArm'], H = O[lado + 'Hand']; if (!F || !H) return;
+  const resto = restoOssos()[lado + 'Hand']; if (!resto) { girarOssoMundo(H, qAlvo.clone().multiply(H.getWorldQuaternion(_qa).invert())); return; }
+  const fixa = () => girarOssoMundo(H, qAlvo.clone().multiply(H.getWorldQuaternion(_qa).invert()));
+  const torcao = () => { const d = resto.clone().invert().multiply(H.quaternion); let th = 2 * Math.atan2(d.y, d.w); if (th > Math.PI) th -= 2 * Math.PI; if (th < -Math.PI) th += 2 * Math.PI; return th; }; // torção em torno do eixo do osso (Y local = ao longo do antebraço)
+  fixa(); const th0 = torcao(); if (Math.abs(th0) < 0.02) return;
+  const eixo = new THREE.Vector3(0, 1, 0).transformDirection(F.matrixWorld).normalize();
+  const qT = new THREE.Quaternion(); girarOssoMundo(F, qT.setFromAxisAngle(eixo, th0)); fixa(); // (não usar _qb: girarOssoMundo usa por dentro)
+  if (Math.abs(torcao()) > Math.abs(th0) * 0.5) { girarOssoMundo(F, qT.setFromAxisAngle(eixo, -2 * th0)); fixa(); } // sinal errado → vai para o outro lado
+}
 function apoiarMaoEsquerda(O, grupoArma, fam, info, k, poloOpc) {
   if (!O.LeftArm || !O.LeftForeArm || !O.LeftHand || !k) return;
   let alvo;
@@ -9982,16 +9995,18 @@ function apoiarMaoEsquerda(O, grupoArma, fam, info, k, poloOpc) {
   let qAlvo = qA;
   if (fam === 'pistol' && O.RightHand) { // empunhadura de duas mãos: a mão esquerda é o ESPELHO da direita no espaço da arma (o clipe do Mixamo deixa a esquerda relaxada)
     const qG = grupoArma.getWorldQuaternion(new THREE.Quaternion()), qR = qG.clone().invert().multiply(O.RightHand.getWorldQuaternion(new THREE.Quaternion()));
-    qAlvo = qG.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), APOIO_PIST[3] || 0)).multiply(new THREE.Quaternion(qR.x, -qR.y, -qR.z, qR.w).multiply(new THREE.Quaternion(0, 1, 0, 0))); if (k < 1) qAlvo.slerp(qA, 1 - k); // espelho em x (x,-y,-z,w) × 180° em Y local: no rig Mixamo o osso esquerdo é o espelho do direito com o Z local invertido (sem o giro a palma fica para fora)
+    qAlvo = qG.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), APOIO_PIST[3] || 0)).multiply(new THREE.Quaternion(qR.x, -qR.y, -qR.z, qR.w).multiply(new THREE.Quaternion(0, 1, 0, 0))); if (k < 1) qAlvo.slerp(qA, 1 - k);
+    if (MODO_MAO_E < 1) qAlvo.slerp(O.LeftHand.getWorldQuaternion(new THREE.Quaternion()), 1 - MODO_MAO_E); // FK = orientação que o IK do braço deixou // espelho em x (x,-y,-z,w) × 180° em Y local: no rig Mixamo o osso esquerdo é o espelho do direito com o Z local invertido (sem o giro a palma fica para fora)
   }
-  girarOssoMundo(O.LeftHand, qAlvo.multiply(O.LeftHand.getWorldQuaternion(new THREE.Quaternion()).invert())); // o punho não herda o giro do IK do braço
+  acomodarPunho(O, 'Left', qAlvo); // o punho não herda o giro do IK do braço; a torção vai para o antebraço
   if (fam === 'pistol') fecharDedos(O, 'Left', APOIO_PIST[4] * k); // dedos da mão de apoio fecham sobre a mão direita
 }
 const PEGA_ARMA = { pistola: new THREE.Vector3(0, -0.085, 0.015), faca: new THREE.Vector3(0, -0.05, 0.05), mg: new THREE.Vector3(0.05, -0.06, 0.16), lancador: new THREE.Vector3(0, -0.06, 0.02), padrao: new THREE.Vector3(0, -0.06, 0.02) }; // centro do cabo no espaço de cada modelo de arma
 const DESLOC_ARMA = { pistol: [0, 0, 0], rifle: [0, -0.05, 0.03] }; // deslocamento fino nos eixos da arma (m), calibrado nas capturas
 const APOIO_PIST = [-0.07, -0.06, 0.06, 0, -0.35];
-const DEDOS_FP = { indD: 0, polD: 0, polE: 0, roll: 0 }; // 1ª pessoa/pistola: abre o indicador direito (gatilho), gira os polegares e rola o viewmodel (rad) // pistola: punho esquerdo no espaço da arma (x, y, z), rolagem em volta do cano (rad) e fechamento dos dedos (rad/falange) // pistola: punho esquerdo no espaço da arma e fechamento dos dedos de apoio
-const RAKE_ARMA = { pistol: 0.50, rifle: 0.26 }; // inclinação do cabo em relação ao eixo dos nós dos dedos (rad), calibrada medindo o eixo do cano contra a mira em 1ª pessoa (pistola 0,50 → 0°, fuzil 0,26 → 0°) // inclinação do cabo (rad), calibrada: cano paralelo à mira na pose de mira (medido em 1ª pessoa e nos bots)
+const DEDOS_FP = { indD: 0, polD: 0, polE: 0, roll: 0 };
+let MODO_PISTOLA_IK = true, MODO_MAO_E = 1, MODO_PUNHO_D = 0; // testes: 0 = mão esquerda segue o clipe (FK), 1 = espelho da direita, 0.5 = meio-termo // 1ª pessoa/pistola: abre o indicador direito (gatilho), gira os polegares e rola o viewmodel (rad) // pistola: punho esquerdo no espaço da arma (x, y, z), rolagem em volta do cano (rad) e fechamento dos dedos (rad/falange) // pistola: punho esquerdo no espaço da arma e fechamento dos dedos de apoio
+const RAKE_ARMA = { pistol: 0.21, rifle: 0.26 }; // inclinação do cabo em relação ao eixo dos nós dos dedos (rad), calibrada medindo o eixo do cano contra a mira (pistola 0,21 com o punho seguindo o antebraço: 1ª pessoa +1°, bots −1,5°; fuzil 0,26 → 0°) // inclinação do cabo (rad), calibrada: cano paralelo à mira na pose de mira (medido em 1ª pessoa e nos bots)
 const AJUSTE_ENCAIXE = { pistola: [0, -0.02, 0, 0, 0, 0], faca: [0, -0.02, 0, -0.25, 0.9, 0], padrao: [0, 0, 0, 0, 0, 0] }; // faca: lâmina girada ~50° para a esquerda e um pouco para cima (de ponta para a mira só aparecia a ponta) // pistola: punho 2 cm mais alto no cabo (validado em recorte: -0.05 afundava a arma no punho, 0 deixava cabo sobrando) // (o encaixe pelo punho já põe o cabo dentro da mão; −5 cm afundava a pistola no punho) // afinação fina por tipo (m, m, m, rad, rad, rad) nos eixos da arma // afinação fina (m, m, m, rad, rad, rad) por tipo
 function esvaziarArma(g, manter) { for (let i = g.children.length - 1; i >= 0; i--) { const o = g.children[i]; if (o === manter) continue; o.traverse(m => { if (m.geometry && !m.geometry.userData.cache) m.geometry.dispose(); if (m.material && m.material.userData.descartavel) m.material.dispose(); }); g.remove(o); } }
 function familiaArma(a) { return a && (a.tipo === 'pistola' || a.tipo === 'faca') ? 'pistol' : 'rifle'; }
@@ -11623,8 +11638,8 @@ function atualizarFPAnimado(dt) {
     const alvo = FPA.pivo.localToWorld(new THREE.Vector3(MF[0], MF[1], MF[2]).add(deslD));
     const qAntes = qp.clone().invert().multiply(O.RightHand.getWorldQuaternion(new THREE.Quaternion())); // orientação do punho no espaço do pivô, suavizada como o deslocamento
     if (!FPA.qMaoSuave || FPA.famSuave2 !== chave) { FPA.qMaoSuave = qAntes.clone(); FPA.famSuave2 = chave; } else FPA.qMaoSuave.slerp(qAntes, kS);
-    ikDoisOssos(O.RightArm, O.RightForeArm, O.RightHand, alvo, polo);
-    girarOssoMundo(O.RightHand, qp.clone().multiply(FPA.qMaoSuave).multiply(O.RightHand.getWorldQuaternion(new THREE.Quaternion()).invert()));
+    if (fam === 'pistol' && !MODO_PISTOLA_IK) { FPA.obj.position.add(new THREE.Vector3(MF[0], MF[1], MF[2]).add(deslD).sub(hl)); FPA.obj.updateMatrixWorld(true); } // pistola: o corpo inteiro desliza até a mão ficar em MAO_FP — braço e punho ficam exatamente como no clipe (o IK torcia o punho e a malha da luva amassava)
+    else { ikDoisOssos(O.RightArm, O.RightForeArm, O.RightHand, alvo, polo); if (fam !== 'pistol' || MODO_PUNHO_D) acomodarPunho(O, 'Right', qp.clone().multiply(FPA.qMaoSuave)); } // pistola: punho segue o antebraço (FK) — forçar a orientação do clipe torcia o punho
     // mão esquerda na recarga = relação do clipe com a mão direita; fora dela vai para a arma (cabo da pistola / guarda-mão) em apoiarMaoEsquerda
     FPA.alvoE = FPA.pivo.localToWorld(new THREE.Vector3(MF[0], MF[1], MF[2]).sub(FPA.maoPura).add(FPA.maoEPura).add(le.clone().sub(FPA.maoEPura).multiplyScalar(kRel)));
     FPA.poloE = O.LeftArm.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(-0.6, -1, 0.2).applyQuaternion(qp));
